@@ -30,12 +30,20 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family
 .stage{position:relative;display:flex;justify-content:center;align-items:center;background:#0a0b0d}
 canvas#view{display:block;touch-action:manipulation;max-width:100%}
 .tag{position:absolute;top:10px;left:12px;font-family:var(--font-mono);font-size:.66rem;letter-spacing:.06em;color:rgba(255,255,255,.75);background:rgba(0,0,0,.45);padding:3px 7px}
+.score{position:absolute;top:10px;right:12px;background:rgba(0,0,0,.5);padding:5px 10px 6px;display:grid;grid-template-columns:auto auto;column-gap:6px;align-items:baseline;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.score small{grid-column:1 / 3;font-size:.62rem;letter-spacing:.08em;color:rgba(255,255,255,.7)}
+.score b{font-size:1.7rem;font-weight:500;line-height:1;color:var(--mid)}
+.score[data-s="good"] b{color:var(--good)}
+.score[data-s="bad"] b{color:var(--bad)}
+.score i{font-style:normal;font-size:1rem;min-width:1em}
+.score i[data-t="up"]{color:var(--good)}
+.score i[data-t="down"]{color:var(--bad)}
 .hint{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);width:max-content;max-width:calc(100% - 32px);background:rgba(10,11,13,.74);padding:9px 16px 9px 12px;border-radius:22px;font-size:1.08rem;font-weight:500;display:flex;gap:10px;align-items:center}
 .hint::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--mid)}
 .hint[data-s="good"]::before{background:var(--good)}
 .hint[data-s="bad"]::before{background:var(--bad)}
 .bar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding:10px 16px}
-.bar>:first-child{justify-self:start}
+.bar>:first-child{justify-self:start;white-space:nowrap;font-size:.95rem}
 .bar>:last-child{justify-self:end}
 .mid{display:flex;justify-content:center}
 button,.btn{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);padding:9px 12px;border-radius:3px;cursor:pointer;min-height:44px;display:inline-flex;align-items:center}
@@ -64,6 +72,7 @@ h2{font-size:.72rem;font-weight:500;letter-spacing:.12em;text-transform:uppercas
   <section class="stage" id="stageBox" aria-label="Vizör">
     <canvas id="view" tabindex="0" aria-label="Vizör. Özneyi işaretlemek için dokun."></canvas>
     <span class="tag" id="modeLabel">ÖRNEK SAHNE</span>
+    <div class="score" id="scoreBox" aria-label="Kadraj puanı"><small id="scoreCap">KADRAJ PUANI</small><b id="scoreNum">0</b><i id="trend" aria-hidden="true"></i></div>
     <div class="hint" id="hint" role="status" aria-live="polite">Analiz ediliyor</div>
   </section>
 
@@ -106,7 +115,7 @@ var view=$("view"), ctx=view.getContext("2d");
 var small=document.createElement("canvas"), sctx=small.getContext("2d",{willReadFrequently:true});
 var video=document.createElement("video"); video.setAttribute("playsinline",""); video.muted=true;
 
-var state={mode:"demo",src:null,sw:960,sh:720,guide:"auto",autoGuide:"thirds",spiralOri:0,tap:null,prev:null,res:null,ev:null,stream:null,lastT:0,more:false,hintShown:"",hintCand:"",hintN:0,orig:null,crop:null,ghost:null,ghostHint:""};
+var state={mode:"demo",src:null,sw:960,sh:720,guide:"auto",autoGuide:"thirds",spiralOri:0,tap:null,prev:null,res:null,ev:null,stream:null,lastT:0,more:false,score:null,hist:[],prevScore:null,lastTgt:null,force:false,hintShown:"",hintCand:"",hintN:0,orig:null,crop:null,ghost:null,ghostHint:""};
 
 /* ---------- görüntü analizi ---------- */
 function boxBlur(src,w,h,r){
@@ -261,13 +270,16 @@ function evaluate(r){
   var aspect=r.w/r.h,g=state.guide,s=r.subj,C=[],issues=[],tgt=null;
   if(g==="auto"){
     if(s){var cur=nearest(state.autoGuide,s,aspect,0),bestG=state.autoGuide,bd=cur.d;
-      ["thirds","phi","diag","center"].forEach(function(k){var d=nearest(k,s,aspect,0).d;if(d<bd-.03){bd=d;bestG=k;}});
+      ["thirds","phi","diag","center"].forEach(function(k){var d=nearest(k,s,aspect,0).d;if(d<bd-.05){bd=d;bestG=k;}});
       state.autoGuide=bestG;}
     g=state.autoGuide;
   }
   /* konum */
   if(s&&g==="spiral"){var bo=0,bdd=9;for(var oo=0;oo<4;oo++){var dd=nearest(g,s,aspect,oo).d;if(dd<bdd){bdd=dd;bo=oo;}}state.spiralOri=bo;}
   if(s){tgt=nearest(g,s,aspect,state.spiralOri);
+    var lt=state.lastTgt;
+    if(state.mode==="live"&&lt&&lt.g===g){var dl=Math.hypot((lt.x-s.x)*aspect,(lt.y-s.y))/Math.hypot(aspect,1);if(dl<tgt.d+.04)tgt={x:lt.x,y:lt.y,d:dl};}
+    state.lastTgt={x:tgt.x,y:tgt.y,g:g};
     var sc=clamp(1-(tgt.d-.03)/.15),det;
     if(tgt.d<=.045)det="Özne "+posName(tgt)+" güç noktasında.";
     else{var dx=tgt.x-s.x,dy=tgt.y-s.y,parts=[];
@@ -317,9 +329,12 @@ function evaluate(r){
     if(sc7<.7)issues.push({w:.9,score:sc7,text:d7});
   }else C.push({k:"sep",name:"Figür-zemin",score:null,val:"yok",det:"Özne işaretlenince ölçülür."});
   issues.sort(function(a,b){return (1-b.score)*b.w-(1-a.score)*a.w;});
+  var WT={pos:1,tilt:1,edge:.8,space:.6,sep:.6,bal:.4,lines:.3},ws=0,wsum=0;
+  C.forEach(function(c){if(c.score!=null){ws+=WT[c.k];wsum+=WT[c.k]*c.score;}});
+  var total=Math.round(100*(ws?wsum/ws:0)*(s?1:.6));
   var shl=issues.filter(function(q){return q.short;});
   var main=shl.length?{text:shl[0].short,s:shl[0].score<.4?"bad":"mid"}:(s?{text:"Hazır",s:"good"}:{text:"Özneye dokun",s:"mid"});
-  return {crit:C,main:main,target:tgt,guide:g};
+  return {crit:C,main:main,target:tgt,guide:g,total:total};
 }
 function suggestCrop(r,e){
   var s=r.subj;if(!s||state.mode==="live")return null;
@@ -369,6 +384,7 @@ function render(){
     line2([[cx,cy],[cx+cw,cy],[cx+cw,cy+ch],[cx,cy+ch],[cx,cy]],COL.good,2*dpr,[8*dpr,5*dpr]);}
   var ref=r.hor||r.ver;
   if(ref&&Math.abs(ref.tilt)>=2)line2([[ref.a[0]*W,ref.a[1]*H],[ref.b[0]*W,ref.b[1]*H]],COL.mid,1.5*dpr);
+  if(e.main.s==="good"){ctx.save();ctx.strokeStyle=COL.good;ctx.lineWidth=5*dpr;ctx.strokeRect(2.5*dpr,2.5*dpr,W-5*dpr,H-5*dpr);ctx.restore();}
   var s=r.subj,t=e.target;
   if(s&&t){var sx=s.x*W,sy=s.y*H,tx=t.x*W,ty=t.y*H,ok=t.d<=.075,col=ok?COL.good:COL.accent;
     ring(sx,sy,13*dpr,col,dpr);
@@ -388,8 +404,16 @@ function renderPanel(){
   var h=$("hint"),txt=e.main.text;
   if(txt!==state.hintShown){
     if(txt===state.hintCand)state.hintN++;else{state.hintCand=txt;state.hintN=1;}
-    if(state.mode!=="live"||state.hintN>=3){state.hintShown=txt;h.textContent=txt;h.dataset.s=e.main.s;}
+    if(state.mode!=="live"||state.hintN>=3||state.force){state.hintShown=txt;h.textContent=txt;h.dataset.s=e.main.s;}
   }else h.dataset.s=e.main.s;
+  state.force=false;
+  $("guideBtn").textContent=state.guide==="auto"?"Oto · "+GLABEL[state.autoGuide]:"Kılavuz: "+GLABEL[state.guide];
+  var sv=Math.round(state.score==null?e.total:state.score),tr=$("trend"),t0="";
+  if(state.mode==="live"){if(state.hist.length>3){var df=state.score-state.hist[0].v;t0=df>3?"up":df<-3?"down":"";}$("scoreCap").textContent="KADRAJ PUANI";}
+  else if(state.prevScore!=null){var d0=sv-state.prevScore;t0=d0>2?"up":d0<-2?"down":"";$("scoreCap").textContent="PUAN · ÖNCEKİ "+state.prevScore;}
+  else $("scoreCap").textContent="KADRAJ PUANI";
+  $("scoreNum").textContent=sv;$("scoreBox").dataset.s=sv>=75?"good":sv>=50?"mid":"bad";
+  tr.dataset.t=t0;tr.textContent=t0==="up"?"▲":t0==="down"?"▼":"";
 }
 
 /* ---------- akış ---------- */
@@ -409,8 +433,13 @@ function runAnalysis(){
   var live=state.mode==="live",tap=state.tap;
   if(tap&&live&&state.prev)tap={x:state.prev.x,y:state.prev.y,track:true};
   state.res=analyze(img,aw,ah,tap,live&&!tap?state.prev:null);
-  state.prev=state.res.subj?{x:state.res.subj.x,y:state.res.subj.y}:null;
+  var sj=state.res.subj;
+  if(live&&sj&&state.prev){sj.x=state.prev.x+.5*(sj.x-state.prev.x);sj.y=state.prev.y+.5*(sj.y-state.prev.y);}
+  state.prev=sj?{x:sj.x,y:sj.y}:null;
   state.ev=evaluate(state.res);
+  if(live){var now=performance.now();state.score=state.score==null?state.ev.total:state.score+.35*(state.ev.total-state.score);
+    state.hist.push({t:now,v:state.score});while(state.hist.length&&now-state.hist[0].t>1400)state.hist.shift();}
+  else state.score=state.ev.total;
   state.crop=suggestCrop(state.res,state.ev);
   var ref=state.res.hor||state.res.ver;
   $("cropBtn").hidden=!state.crop;
@@ -420,7 +449,7 @@ function runAnalysis(){
 }
 function refresh(){layout();runAnalysis();render();}
 function setMode(m,label){
-  state.mode=m;$("modeLabel").textContent=label;state.tap=null;state.prev=null;state.crop=null;state.ghost=null;if(m==="live")state.orig=null;
+  state.mode=m;$("modeLabel").textContent=label;state.tap=null;state.prev=null;state.crop=null;state.ghost=null;state.score=null;state.hist=[];state.prevScore=null;state.lastTgt=null;if(m==="live")state.orig=null;
   $("demoBtn").hidden=(m==="demo");$("shotBtn").hidden=(m!=="live");$("ghostBtn").hidden=(m!=="live");$("ghostBtn").textContent="Kareyi hayalet olarak tut";$("autoSubjBtn").hidden=true;
   $("liveBtn").hidden=!canLive||m==="live";$("fileMain").hidden=canLive;
   if(m!=="live"&&state.stream){state.stream.getTracks().forEach(function(t){t.stop();});state.stream=null;}
@@ -439,11 +468,12 @@ function demoScene(){
   g.fillStyle="#2a3230";g.beginPath();g.moveTo(960,96);g.lineTo(884,150);g.lineTo(930,176);g.lineTo(872,236);g.lineTo(960,250);g.closePath();g.fill();
   return c;
 }
-function useSrc(c){state.src=c;state.sw=c.width;state.sh=c.height;state.tap=null;state.prev=null;$("autoSubjBtn").hidden=true;refresh();}
+function useSrc(c){if(state.mode!=="live"&&state.src&&state.src!==c&&state.score!=null&&state.mode!=="demo")state.prevScore=Math.round(state.score);
+  state.src=c;state.sw=c.width;state.sh=c.height;state.tap=null;state.prev=null;$("autoSubjBtn").hidden=true;refresh();}
 function showDemo(){setMode("demo","ÖRNEK SAHNE");state.orig=demoScene();useSrc(state.orig);}
 function toCanvas(src,w,h){var k=Math.min(1,2000/Math.max(w,h)),c=document.createElement("canvas");c.width=Math.round(w*k);c.height=Math.round(h*k);c.getContext("2d").drawImage(src,0,0,c.width,c.height);return c;}
 function loadFile(f){
-  function done(src,w,h){if(!w||!h){fail();return;}setMode("photo","FOTOĞRAF");state.orig=toCanvas(src,w,h);useSrc(state.orig);}
+  function done(src,w,h){if(!w||!h){fail();return;}var keep=(state.mode==="photo"&&state.score!=null)?Math.round(state.score):null;setMode("photo","FOTOĞRAF");state.prevScore=keep;state.orig=toCanvas(src,w,h);useSrc(state.orig);}
   function fail(){$("hint").textContent="Fotoğraf açılamadı (tür: "+(f.type||"bilinmiyor")+"). Kamera ayarında biçimi JPEG yapıp yeniden dene.";$("hint").dataset.s="bad";}
   function viaReader(){var fr=new FileReader();fr.onload=function(){var im=new Image();im.onload=function(){done(im,im.naturalWidth,im.naturalHeight);};im.onerror=fail;im.src=fr.result;};fr.onerror=fail;fr.readAsDataURL(f);}
   if(window.createImageBitmap)createImageBitmap(f).then(function(b){done(b,b.width,b.height);}).catch(viaReader);else viaReader();
@@ -469,8 +499,9 @@ $("demoBtn").addEventListener("click",showDemo);
 $("autoSubjBtn").addEventListener("click",function(){state.tap=null;state.prev=null;this.hidden=true;runAnalysis();render();});
 var GORDER=["auto","thirds","phi","spiral","diag","center"],GLABEL={auto:"Oto",thirds:"Üçler",phi:"Altın oran",spiral:"Spiral",diag:"Diyagonal",center:"Merkez"};
 $("guideBtn").addEventListener("click",function(){
-  state.guide=GORDER[(GORDER.indexOf(state.guide)+1)%GORDER.length];this.textContent="Kılavuz: "+GLABEL[state.guide];
-  if(state.res){state.ev=evaluate(state.res);state.crop=suggestCrop(state.res,state.ev);$("cropBtn").hidden=!state.crop;renderPanel();render();}
+  state.guide=GORDER[(GORDER.indexOf(state.guide)+1)%GORDER.length];
+  state.force=true;state.lastTgt=null;
+  if(state.res){state.ev=evaluate(state.res);if(state.mode!=="live")state.score=state.ev.total;state.crop=suggestCrop(state.res,state.ev);$("cropBtn").hidden=!state.crop;renderPanel();render();}
 });
 $("moreBtn").addEventListener("click",function(){
   state.more=!state.more;$("more").hidden=!state.more;this.setAttribute("aria-expanded",state.more?"true":"false");this.textContent=state.more?"Kapat":"Ayrıntı";render();
@@ -505,7 +536,9 @@ $("liveBtn").addEventListener("click",startLive);
 $("shotBtn").addEventListener("click",function(){
   if(!video.videoWidth)return;
   var c=document.createElement("canvas");c.width=video.videoWidth;c.height=video.videoHeight;c.getContext("2d").drawImage(video,0,0);
-  c.toBlob(function(b){if(!b)return;var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="kadraj-"+Date.now()+".jpg";document.body.appendChild(a);a.click();a.remove();},"image/jpeg",.94);
+  c.toBlob(function(b){if(!b)return;var nm="kadraj-"+Date.now()+".jpg",f;try{f=new File([b],nm,{type:"image/jpeg"});}catch(e){f=null;}
+    if(f&&navigator.maxTouchPoints>0&&navigator.canShare&&navigator.canShare({files:[f]})){navigator.share({files:[f]}).catch(function(){});return;}
+    var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="kadraj-"+Date.now()+".jpg";document.body.appendChild(a);a.click();a.remove();},"image/jpeg",.94);
 });
 
 ["accent","good","mid","bad"].forEach(function(k){COL[k]=css("--"+k);});
