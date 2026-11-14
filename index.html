@@ -25,9 +25,9 @@
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.35}
-.app{min-height:100%;display:flex;flex-direction:column}
-.stage{position:relative;display:flex;justify-content:center;align-items:center;background:#0a0b0d}
+html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.35}
+.app{position:fixed;inset:0;display:flex;flex-direction:column}
+.stage{flex:1 1 0;min-height:0;overflow:hidden;position:relative;display:flex;justify-content:center;align-items:center;background:#0a0b0d}
 canvas#view{display:block;touch-action:manipulation;max-width:100%}
 .tag{position:absolute;top:10px;left:12px;font-family:var(--font-mono);font-size:.66rem;letter-spacing:.06em;color:rgba(255,255,255,.75);background:rgba(0,0,0,.45);padding:3px 7px}
 .score{position:absolute;top:10px;right:12px;background:rgba(0,0,0,.5);padding:5px 10px 6px;display:grid;grid-template-columns:auto auto;column-gap:6px;align-items:baseline;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
@@ -42,7 +42,7 @@ canvas#view{display:block;touch-action:manipulation;max-width:100%}
 .hint::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--mid)}
 .hint[data-s="good"]::before{background:var(--good)}
 .hint[data-s="bad"]::before{background:var(--bad)}
-.bar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding:10px 16px}
+.bar{flex:none;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding:10px 16px;padding-bottom:max(10px,env(safe-area-inset-bottom));background:var(--bg);position:relative;z-index:2}
 .bar>:first-child{justify-self:start;white-space:nowrap;font-size:.95rem}
 .bar>:last-child{justify-self:end}
 .mid{display:flex;justify-content:center}
@@ -52,7 +52,9 @@ button:focus-visible,.btn:focus-within,canvas:focus-visible{outline:2px solid va
 .shutter{width:64px;height:64px;min-height:64px;border-radius:50%;border:3px solid var(--ink);background:transparent;padding:0;position:relative}
 .shutter::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--ink)}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-.more{width:100%;max-width:720px;margin:0 auto;padding:6px 16px 28px;display:grid;gap:16px}
+.more{position:absolute;left:0;right:0;bottom:0;max-height:72%;overflow-y:auto;-webkit-overflow-scrolling:touch;z-index:3;background:var(--bg);border-top:1px solid var(--line);padding:12px 16px 28px;padding-bottom:max(28px,env(safe-area-inset-bottom));display:grid;gap:16px;align-content:start}
+.more-head{display:flex;justify-content:space-between;align-items:center}
+.more-head h2{margin:0}
 .row{display:flex;flex-wrap:wrap;gap:8px}
 h2{font-size:.72rem;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
 .crit{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
@@ -87,6 +89,7 @@ h2{font-size:.72rem;font-weight:500;letter-spacing:.12em;text-transform:uppercas
   </div>
 
   <div class="more" id="more" hidden>
+    <div class="more-head"><h2>Ayrıntı</h2><button type="button" id="closeBtn">Kapat</button></div>
     <div class="row">
       <label class="btn" for="fileInput">Fotoğraf seç
         <input class="visually-hidden" type="file" id="fileInput" accept="image/*">
@@ -418,9 +421,8 @@ function renderPanel(){
 
 /* ---------- akış ---------- */
 function layout(){
-  var box=$("stageBox"),availH=Math.max(220,window.innerHeight-$("bar").offsetHeight),cw=box.clientWidth,aspect=state.sw/state.sh;
-  box.style.minHeight=availH+"px";
-  var w=Math.min(cw,availH*aspect),h=w/aspect,dpr=Math.min(2,window.devicePixelRatio||1);
+  var box=$("stageBox"),cw=box.clientWidth,ch=Math.max(120,box.clientHeight),aspect=state.sw/state.sh;
+  var w=Math.min(cw,ch*aspect),h=w/aspect,dpr=Math.min(2,window.devicePixelRatio||1);
   view.style.width=Math.round(w)+"px";view.style.height=Math.round(h)+"px";
   view.width=Math.round(w*dpr);view.height=Math.round(h*dpr);
 }
@@ -504,8 +506,11 @@ $("guideBtn").addEventListener("click",function(){
   if(state.res){state.ev=evaluate(state.res);if(state.mode!=="live")state.score=state.ev.total;state.crop=suggestCrop(state.res,state.ev);$("cropBtn").hidden=!state.crop;renderPanel();render();}
 });
 $("moreBtn").addEventListener("click",function(){
-  state.more=!state.more;$("more").hidden=!state.more;this.setAttribute("aria-expanded",state.more?"true":"false");this.textContent=state.more?"Kapat":"Ayrıntı";render();
+  state.more=!state.more;$("more").hidden=!state.more;this.setAttribute("aria-expanded",state.more?"true":"false");render();
 });
+$("closeBtn").addEventListener("click",function(){$("moreBtn").click();});
+if(window.visualViewport)window.visualViewport.addEventListener("resize",function(){layout();render();});
+window.addEventListener("orientationchange",function(){setTimeout(function(){layout();render();},250);});
 view.addEventListener("pointerdown",function(ev){
   var r=view.getBoundingClientRect();
   state.tap={x:(ev.clientX-r.left)/r.width,y:(ev.clientY-r.top)/r.height};state.prev=null;
