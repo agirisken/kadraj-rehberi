@@ -42,7 +42,11 @@ canvas#view{display:block;touch-action:none;max-width:100%}
 .score i{font-style:normal;font-size:1rem;min-width:1em}
 .score i[data-t="up"]{color:var(--good)}
 .score i[data-t="down"]{color:var(--bad)}
-.hint{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);width:max-content;max-width:calc(100% - 32px);background:rgba(10,11,13,.74);padding:9px 16px 9px 12px;border-radius:22px;font-size:1.08rem;font-weight:500;display:flex;gap:10px;align-items:center}
+.hud{position:absolute;left:0;right:0;bottom:14px;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
+.hud>*{pointer-events:auto}
+.rec{min-height:30px;padding:4px 12px;border-radius:15px;background:rgba(10,11,13,.6);border-color:rgba(255,255,255,.35);font-size:.86rem;max-width:calc(100% - 32px)}
+.rec[data-tap="1"]{border-color:var(--accent);color:var(--accent)}
+.hint{max-width:calc(100% - 32px);background:rgba(10,11,13,.74);padding:9px 16px 9px 12px;border-radius:22px;font-size:1.08rem;font-weight:500;display:flex;gap:10px;align-items:center}
 .hint::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--mid)}
 .hint[data-s="good"]::before{background:var(--good)}
 .hint[data-s="bad"]::before{background:var(--bad)}
@@ -81,7 +85,10 @@ h2{font-size:.72rem;font-weight:500;letter-spacing:.12em;text-transform:uppercas
     <div class="score" id="scoreBox" aria-label="Kadraj puanı"><small id="scoreCap">KADRAJ PUANI</small><b id="scoreNum">0</b><i id="trend" aria-hidden="true"></i></div>
     <button type="button" class="zoom" id="zoomBtn" aria-label="Yakınlaştırma" hidden>1×</button>
     <button type="button" class="roll" id="rollBtn" aria-label="Çekilen kareleri telefona kaydet" hidden><canvas id="rollThumb" width="108" height="108"></canvas><span id="rollN">0</span></button>
-    <div class="hint" id="hint" role="status" aria-live="polite">Analiz ediliyor</div>
+    <div class="hud">
+      <button type="button" class="rec" id="recBtn" hidden></button>
+      <div class="hint" id="hint" role="status" aria-live="polite">Analiz ediliyor</div>
+    </div>
   </section>
 
   <div class="bar" id="bar">
@@ -124,7 +131,7 @@ var view=$("view"), ctx=view.getContext("2d");
 var small=document.createElement("canvas"), sctx=small.getContext("2d",{willReadFrequently:true});
 var video=document.createElement("video"); video.setAttribute("playsinline",""); video.muted=true;
 
-var state={mode:"demo",src:null,sw:960,sh:720,guide:"auto",autoGuide:"thirds",spiralOri:0,tap:null,prev:null,res:null,ev:null,stream:null,lastT:0,more:false,zoom:1,zoomCaps:null,zoomSent:1,shots:[],flash:0,score:null,hist:[],prevScore:null,lastTgt:null,force:false,hintShown:"",hintCand:"",hintN:0,orig:null,crop:null,ghost:null,ghostHint:""};
+var state={mode:"demo",src:null,sw:960,sh:720,guide:"auto",autoGuide:"thirds",spiralOri:0,tap:null,prev:null,res:null,ev:null,stream:null,lastT:0,more:false,rec:null,recCand:"",recN:0,zoom:1,zoomCaps:null,zoomSent:1,shots:[],flash:0,score:null,hist:[],prevScore:null,lastTgt:null,force:false,hintShown:"",hintCand:"",hintN:0,orig:null,crop:null,ghost:null,ghostHint:""};
 
 /* ---------- görüntü analizi ---------- */
 function boxBlur(src,w,h,r){
@@ -229,7 +236,9 @@ function analyze(img,w,h,tap,prev){
   var cut=[];
   if(subj){var mg=Math.max(1,Math.round(w*.025));
     if(subj.px0<mg)cut.push("sol");if(subj.px1>=w-mg)cut.push("sağ");if(subj.py0<mg)cut.push("üst");if(subj.py1>=h-mg)cut.push("alt");}
-  return {w:w,h:h,subj:subj,lines:lines,hor:hor,ver:ver,obl:obl,bal:bal,empty:empty/n,distract:distract,cut:cut};
+  var sd=0,sp=0;for(y=0;y<h;y++)for(x=0;x<w;x++){i=y*w+x;sd+=Math.abs(Ll[i]-Ll[y*w+(w-1-x)])+Math.abs(Ls[i]-Ls[y*w+(w-1-x)])*.5;sp+=Math.abs(Ls[i]-mL);}
+  var sym=sp>n*4?Math.max(0,1-sd/(1.5*sp)):0;
+  return {sym:sym,w:w,h:h,subj:subj,lines:lines,hor:hor,ver:ver,obl:obl,bal:bal,empty:empty/n,distract:distract,cut:cut};
 }
 
 /* ---------- kılavuzlar ---------- */
@@ -274,15 +283,19 @@ function posName(t){
 }
 
 /* ---------- değerlendirme ---------- */
+function recommend(r){
+  var s=r.subj,ar=s?(s.x1-s.x0)*(s.y1-s.y0):0;
+  if(r.sym>.72&&(!s||Math.abs(s.x-.5)<.14))return {g:"center",why:"simetrik sahne"};
+  if(r.obl.length>=2)return {g:"diag",why:"güçlü eğik çizgiler"};
+  if(s&&ar<.04&&r.empty>.72)return {g:"spiral",why:"küçük özne, geniş boşluk"};
+  if(r.hor)return {g:"thirds",why:"ufuk çizgisi var"};
+  if(s&&ar>.25)return {g:"phi",why:"kadrajı dolduran özne"};
+  return {g:"thirds",why:"genel amaçlı"};
+}
 function clamp(v){return Math.max(0,Math.min(1,v));}
 function evaluate(r){
   var aspect=r.w/r.h,g=state.guide,s=r.subj,C=[],issues=[],tgt=null;
-  if(g==="auto"){
-    if(s){var cur=nearest(state.autoGuide,s,aspect,0),bestG=state.autoGuide,bd=cur.d;
-      ["thirds","phi","diag","center"].forEach(function(k){var d=nearest(k,s,aspect,0).d;if(d<bd-.05){bd=d;bestG=k;}});
-      state.autoGuide=bestG;}
-    g=state.autoGuide;
-  }
+  if(g==="auto")g=state.autoGuide;
   /* konum */
   if(s&&g==="spiral"){var bo=0,bdd=9;for(var oo=0;oo<4;oo++){var dd=nearest(g,s,aspect,oo).d;if(dd<bdd){bdd=dd;bo=oo;}}state.spiralOri=bo;}
   if(s){tgt=nearest(g,s,aspect,state.spiralOri);
@@ -419,6 +432,9 @@ function renderPanel(){
     if(state.mode!=="live"||state.hintN>=3||state.force){state.hintShown=txt;h.textContent=txt;h.dataset.s=e.main.s;}
   }else h.dataset.s=e.main.s;
   state.force=false;
+  var rb=$("recBtn"),rc=state.rec;
+  if(!rc||(state.guide!=="auto"&&rc.g===state.guide))rb.hidden=true;
+  else{rb.hidden=false;var tp=state.guide!=="auto",rt=(tp?"Öneri: ":"")+GLABEL[rc.g]+" · "+rc.why;if(rb.textContent!==rt)rb.textContent=rt;rb.dataset.tap=tp?"1":"0";}
   $("guideBtn").textContent=state.guide==="auto"?"Oto · "+GLABEL[state.autoGuide]:"Kılavuz: "+GLABEL[state.guide];
   var sv=Math.round(state.score==null?e.total:state.score),tr=$("trend"),t0="";
   if(state.mode==="live"){if(state.hist.length>3){var df=state.score-state.hist[0].v;t0=df>3?"up":df<-3?"down":"";}$("scoreCap").textContent="KADRAJ PUANI";}
@@ -447,6 +463,11 @@ function runAnalysis(){
   var sj=state.res.subj;
   if(live&&sj&&state.prev){sj.x=state.prev.x+.5*(sj.x-state.prev.x);sj.y=state.prev.y+.5*(sj.y-state.prev.y);}
   state.prev=sj?{x:sj.x,y:sj.y}:null;
+  var rc=recommend(state.res);
+  if(!live||!state.rec){state.rec=rc;}
+  else if(rc.g===state.rec.g){state.rec=rc;state.recN=0;}
+  else{if(rc.g===state.recCand)state.recN++;else{state.recCand=rc.g;state.recN=1;}if(state.recN>=5){state.rec=rc;state.recN=0;}}
+  state.autoGuide=state.rec.g;
   state.ev=evaluate(state.res);
   if(live){var now=performance.now();state.score=state.score==null?state.ev.total:state.score+.35*(state.ev.total-state.score);
     state.hist.push({t:now,v:state.score});while(state.hist.length&&now-state.hist[0].t>1400)state.hist.shift();}
@@ -460,7 +481,7 @@ function runAnalysis(){
 }
 function refresh(){layout();runAnalysis();render();}
 function setMode(m,label){
-  state.mode=m;$("modeLabel").textContent=label;state.tap=null;state.prev=null;state.crop=null;state.ghost=null;state.score=null;state.hist=[];state.prevScore=null;state.lastTgt=null;if(m==="live")state.orig=null;
+  state.mode=m;$("modeLabel").textContent=label;state.tap=null;state.prev=null;state.crop=null;state.ghost=null;state.score=null;state.hist=[];state.prevScore=null;state.lastTgt=null;state.rec=null;state.recN=0;if(m==="live")state.orig=null;
   $("demoBtn").hidden=(m==="demo");$("shotBtn").hidden=(m!=="live");$("ghostBtn").hidden=(m!=="live");$("zoomBtn").hidden=(m!=="live");$("ghostBtn").textContent="Kareyi hayalet olarak tut";$("autoSubjBtn").hidden=true;
   $("liveBtn").hidden=!canLive||m==="live";$("fileMain").hidden=canLive;
   if(m!=="live"&&state.stream){state.stream.getTracks().forEach(function(t){t.stop();});state.stream=null;}
@@ -512,6 +533,11 @@ var GORDER=["auto","thirds","phi","spiral","diag","center"],GLABEL={auto:"Oto",t
 $("guideBtn").addEventListener("click",function(){
   state.guide=GORDER[(GORDER.indexOf(state.guide)+1)%GORDER.length];
   state.force=true;state.lastTgt=null;
+  if(state.res){state.ev=evaluate(state.res);if(state.mode!=="live")state.score=state.ev.total;state.crop=suggestCrop(state.res,state.ev);$("cropBtn").hidden=!state.crop;renderPanel();render();}
+});
+$("recBtn").addEventListener("click",function(){
+  if(state.guide==="auto"||!state.rec)return;
+  state.guide=state.rec.g;state.force=true;state.lastTgt=null;
   if(state.res){state.ev=evaluate(state.res);if(state.mode!=="live")state.score=state.ev.total;state.crop=suggestCrop(state.res,state.ev);$("cropBtn").hidden=!state.crop;renderPanel();render();}
 });
 $("moreBtn").addEventListener("click",function(){
